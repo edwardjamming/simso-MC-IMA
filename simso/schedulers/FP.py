@@ -11,15 +11,20 @@ from simso.schedulers import scheduler
 )
 class FP(Scheduler):
     """ Fixed Priority (use 'priority' field) """
+
     def init(self):
         self.ready_list = []
+        self._part = None
 
+    def set_time_partition(self, part):
+        self._part = part
+    
     def on_activate(self, job):
         self.ready_list.append(job)
-        job.cpu.resched()
+        job.cpu.resched(self)
 
     def on_terminated(self, job):
-        job.cpu.resched()
+        job.cpu.resched(self)
 
     def schedule(self, cpu):
         if self.ready_list:

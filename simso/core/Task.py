@@ -5,6 +5,9 @@ from SimPy.Simulation import Process, Monitor, hold, passivate
 from simso.core.Job import Job
 from simso.core.Timer import Timer
 from .CSDP import CSDP
+import numpy as np
+import random
+import math
 
 import os
 import os.path
@@ -20,7 +23,8 @@ class TaskInfo(object):
     def __init__(self, name, identifier, task_type, abort_on_miss, period,
                  activation_date, n_instr, mix, stack_file, wcet, acet,
                  et_stddev, deadline, base_cpi, followed_by,
-                 list_activation_dates, preemption_cost, data):
+                 list_activation_dates, preemption_cost, data, 
+                 overrun = 0, acet_distribution = None):
         """
         :type name: str
         :type identifier: int
@@ -62,6 +66,18 @@ class TaskInfo(object):
         self.list_activation_dates = list_activation_dates
         self.data = data
         self.preemption_cost = preemption_cost
+        if overrun == 0:
+            self.overrun = wcet
+        else:
+            self.overrun = overrun
+
+        self.skippable = False
+        if data and 'skip' in data and 'optional' in data:
+            self.skip = data['skip']
+            self.optional = data['optional']
+            self.skippable = True
+
+        self.acet_distribution = acet_distribution
 
     @property
     def csdp(self):
@@ -141,6 +157,11 @@ class GenericTask(Process):
         self._cpi_alone = {}
         self._jobs = []
         self.job = None
+        self.last_skipped = 0
+        self.reclaimed_budget = 0
+
+        # EDIT added partition to which this task belongs
+        self._part = None
 
     def __lt__(self, other):
         return self.identifier < other.identifier
@@ -155,6 +176,9 @@ class GenericTask(Process):
         if proc is None:
             proc = self.cpu
         return self._cpi_alone[proc]
+
+    def set_time_partition(self, part):
+        self._part = part
 
     @property
     def base_cpi(self):
@@ -198,7 +222,17 @@ class GenericTask(Process):
     @property
     def wcet(self):
         """Worst-Case Execution Time in milliseconds."""
+        if self._task_info.skippable:
+            if (self._job_count - self.last_skipped) >= self._task_info.skip:
+                return self._task_info.wcet
+            else:
+                return self._task_info.wcet + self._task_info.optional
+                
         return self._task_info.wcet
+    @property
+    def overrun(self):
+        """Extra Overrun Time in milliseconds."""
+        return self._task_info.overrun
 
     @property
     def acet(self):
@@ -249,8 +283,69 @@ class GenericTask(Process):
         """
         return self._jobs
 
+    @property
+    def part(self):
+        """
+        Time partition this task is asigned to.
+        """
+        return self._part
+
+    def next_activation(self):
+        """
+        Calculates the absolute time of next activation
+        """
+        if self._task_info.activation_date > self.sim.now_ms():
+            return self._task_info.activation_date
+        else:
+            retval = int((self.sim.now_ms() - self._task_info.activation_date) / self.period)
+            retval = self._task_info.activation_date + ((retval + 1) * self.period)
+            return retval
+        
+    def job_ended(self):
+        """
+        Returns true if the job released in the current period has
+        terminated
+        """
+        # If this is an activation instant, we know that there will be
+        # a release. So return False
+        if (self.wcet > 0 and 
+            (self.sim.now_ms() - self._task_info.activation_date) % self.period) == 0:
+            
+            return False
+        
+        return len(self._activations_fifo) == 0
+
+    def get_reclaimed_budget(self, amount):
+        self._sim.logger.log("Task " + str(self.name) + " received " + str(amount) + " units of reclaimed budget")
+        self.reclaimed_budget += amount
+
+    def skip_selected(self):
+        if self._task_info.skippable:
+            if self._task_info.optional and (self._job_count - self.last_skipped) >= self._task_info.skip:
+                return True
+
+        return False
+
+    def skipping_amount(self):
+        if self.skip_selected():
+            return self._task_info.optional - self.reclaimed_budget
+
+        return 0
+
+    def opt_pending(self):
+        if self._task_info.skippable:
+            if self.is_active():
+                return False
+            elif self.job and self.job.computation_time < (self._task_info.wcet + self._task_info.optional):
+                return True
+            else:
+                return False
+        else:
+            return False
+
     def end_job(self, job):
         self._last_cpu = self.cpu
+
         if self.followed_by:
             self.followed_by.create_job(job)
 
@@ -260,7 +355,44 @@ class GenericTask(Process):
             self.job = self._activations_fifo[0]
             self.sim.activate(self.job, self.job.activate_job())
 
+        # Now check if this job was the madatory part of a skippable
+        # task instance
+        if not self._task_info.skippable:
+            return
+
+        if not job.aborted and not job.optional_part and job.computation_time < (self._task_info.wcet + self._task_info.optional):
+            # This means that an optional partition was not yet executed
+            self.sim.record_opt_available(self._task_info.optional, self)
+
+            if self.reclaimed_budget:
+                # OK there is enough budget to start an optional part on this CPU
+                self.part.inst._avail_budget[self.cpu] -= self._task_info.optional
+                opt_job = Job(self, "{}_{}_OPT".format(self.name, self._job_count), None,
+                              monitor=self._monitor, etm=self._etm, sim=self.sim, 
+                              jobid=self._job_count, optional_part=True, 
+                              override_wcet=self.reclaimed_budget)
+                self.job = opt_job
+                self.sim.activate(opt_job, opt_job.activate_job())
+                self._activations_fifo.append(opt_job)
+                self._jobs.append(opt_job)
+                job.timer_deadline.args[1] = opt_job
+        
+        if not job.aborted and job.optional_part:
+            # An optional part has completed. Keep track of it
+            self.sim.record_opt_completed(job.override_wcet, self)
+            
     def _job_killer(self, job):
+        # At the deadline, not matter what, reset reclaimed budget for
+        # this task
+        self.reclaimed_budget = 0
+
+        # Verify if the optional part was executed or skipped
+        if self._task_info.skippable and \
+           not job.optional_part and \
+           job.computation_time < (self._task_info.wcet + self._task_info.optional):
+
+            self.last_skipped = job.jobid
+
         if job.end_date is None and job.computation_time < job.wcet:
             if self._task_info.abort_on_miss:
                 self.cancel(job)
@@ -272,8 +404,22 @@ class GenericTask(Process):
         directly by a scheduler.
         """
         self._job_count += 1
+            
+        override_wcet = None
+
+        # If this is a critical, non-skippable task the actual WCET
+        # will have a unique, uniform or loguniform distribution on
+        # the length
+        if self._task_info.overrun != self._task_info.wcet:
+            if self._task_info.acet_distribution == 'uniform':
+                override_wcet = np.random.uniform(low=self._task_info.wcet, high=self._task_info.overrun)
+            elif self._task_info.acet_distribution == 'loguniform':
+                override_wcet = np.exp(np.random.uniform(low=np.log(self._task_info.wcet), 
+                                                         high=np.log(self._task_info.overrun)))
+
         job = Job(self, "{}_{}".format(self.name, self._job_count), pred,
-                  monitor=self._monitor, etm=self._etm, sim=self.sim)
+                  monitor=self._monitor, etm=self._etm, sim=self.sim, 
+                  jobid=self._job_count, override_wcet=override_wcet)
 
         if len(self._activations_fifo) == 0:
             self.job = job
@@ -282,8 +428,11 @@ class GenericTask(Process):
         self._jobs.append(job)
 
         timer_deadline = Timer(self.sim, GenericTask._job_killer,
-                               (self, job), self.deadline)
+                               [self, job], self.deadline)
         timer_deadline.start()
+        
+        # Add the timer to the job, so we can control it later
+        job.timer_deadline = timer_deadline
 
     def _init(self):
         if self.cpu is None:

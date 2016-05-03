@@ -9,7 +9,7 @@ class Job(Process):
     """The Job class simulate the behavior of a real Job. This *should* only be
     instantiated by a Task."""
 
-    def __init__(self, task, name, pred, monitor, etm, sim):
+    def __init__(self, task, name, pred, monitor, etm, sim, jobid, optional_part=False, override_wcet=None):
         """
         Args:
             - `task`: The parent :class:`task <simso.core.Task.Task>`.
@@ -44,6 +44,10 @@ class Job(Process):
         self._monitor = monitor
         self._etm = etm
         self._was_running_on = task.cpu
+        self.jobid = jobid
+        self.timer_deadline = None
+        self.optional_part = optional_part
+        self.override_wcet = override_wcet
 
         self._on_activate()
 
@@ -58,6 +62,7 @@ class Job(Process):
     def _on_activate(self):
         self._monitor.observe(JobEvent(self, JobEvent.ACTIVATE))
         self._sim.logger.log(self.name + " Activated.", kernel=True)
+                
         self._etm.on_activate(self)
 
     def _on_execute(self):
@@ -70,8 +75,12 @@ class Job(Process):
         self.cpu.was_running = self
 
         self._monitor.observe(JobEvent(self, JobEvent.EXECUTE, self.cpu))
-        self._sim.logger.log("{} Executing on {}".format(
-            self.name, self._task.cpu.name), kernel=True)
+        if self.task.skip_selected():
+            self._sim.logger.log("{} Executing on {} (w/ skipping)".format(
+                self.name, self._task.cpu.name), kernel=True)
+        else:
+            self._sim.logger.log("{} Executing on {}".format(
+                self.name, self._task.cpu.name), kernel=True)
 
     def _on_stop_exec(self):
         if self._last_exec is not None:
@@ -107,6 +116,8 @@ class Job(Process):
         self._task.end_job(self)
         self._task.cpu.terminate(self)
         self._sim.logger.log("Job " + str(self.name) + " aborted! ret:" + str(self.ret))
+        if not self.optional_part:
+            self._sim.report_job_miss(self, self.ret)
 
     def is_running(self):
         """
@@ -242,8 +253,19 @@ class Job(Process):
         """
         Worst-Case Execution Time in milliseconds.
         Equivalent to ``self.task.wcet``.
-        """
+        """ 
+        if self.override_wcet is not None:
+            return self.override_wcet
+
         return self._task.wcet
+
+    @property
+    def overrun(self):
+        """
+        Extra overrun time.
+        Equivalent to ``self.task.overrun``.
+        """
+        return self._task.overrun
 
     @property
     def activation_date(self):

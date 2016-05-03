@@ -5,6 +5,8 @@ class ProcEvent(object):
     RUN = 1
     IDLE = 2
     OVERHEAD = 3
+    START_PART = 4
+    NO_PART = 5
 
     def __init__(self, event=0, args=None):
         self.event = event
@@ -36,3 +38,11 @@ class ProcCxtLoadEvent(ProcOverheadEvent):
     def __init__(self, terminated=False):
         ProcOverheadEvent.__init__(self, "CL")
         self.terminated = terminated
+
+class ProcStartPart(ProcEvent):
+    def __init__(self, inst):
+        ProcEvent.__init__(self, ProcEvent.START_PART, inst)
+
+class ProcNoPart(ProcEvent):
+    def __init__(self, inst):
+        ProcEvent.__init__(self, ProcEvent.NO_PART, inst)

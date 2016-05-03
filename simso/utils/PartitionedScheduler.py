@@ -192,6 +192,7 @@ class PartitionedScheduler(Scheduler):
 
         self._packer = packer
         assert self.packer(), "Packing failed"
+        self._part = None
 
         for cpu in self.processors:
             self.map_cpu_sched[cpu.identifier].init()

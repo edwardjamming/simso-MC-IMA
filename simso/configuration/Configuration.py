@@ -8,6 +8,8 @@ from simso.core.Scheduler import SchedulerInfo
 from simso.core import Scheduler
 from simso.core.Task import TaskInfo
 from simso.core.Processor import ProcInfo
+from simso.core.TimePartition import TimePartitionInfo
+from simso.core.TimePartition import TimePartition
 
 from .GenerateConfiguration import generate
 from .parser import Parser
@@ -70,6 +72,8 @@ class Configuration(object):
             self.proc_data_fields = {}
             self.memory_access_time = 100
             self._scheduler_info = SchedulerInfo()
+            self._part_info_list = []
+            self._part_scheduler_info = None
         self.calc_penalty_cache()
         self._set_filename(filename)
 
@@ -118,7 +122,8 @@ class Configuration(object):
         self.check_general()
         self.check_scheduler()
         self.check_processors()
-        self.check_tasks()
+        # self.check_tasks() TODO implement logic for check_tasks() in
+        # time-partitioned system
         self.check_caches()
 
     def check_general(self):
@@ -130,13 +135,17 @@ class Configuration(object):
             "The memory access time must be a positive number."
 
     def check_scheduler(self):
-        cls = self._scheduler_info.get_cls()
-        assert cls is not None, \
-            "A scheduler is needed."
-        assert issubclass(cls, Scheduler), \
-            "Must inherits from Scheduler."
-        assert self._scheduler_info.overhead >= 0, \
-            "An overhead must not be negative."
+        if(self._part_scheduler_info is None):
+            cls = self._scheduler_info.get_cls()
+            assert cls is not None, \
+                "A scheduler is needed."
+            assert issubclass(cls, Scheduler), \
+                "Must inherits from Scheduler."
+            assert self._scheduler_info.overhead >= 0, \
+                "An overhead must not be negative."
+        else:
+            cls = self._part_scheduler_info.get_cls()
+            assert cls is not None, "A partition scheduler is needed"
 
     def check_processors(self):
         # At least one processor:
@@ -277,11 +286,51 @@ class Configuration(object):
         """
         return self._scheduler_info
 
+    @property
+    def part_scheduler_info(self):
+        """
+        SchedulerInfo object.
+        """
+        return self._part_scheduler_info
+
+    @property
+    def part_info_list(self):
+        return self._part_info_list
+
+    def assign_task_to_part(self, task_info, part_info):
+        if(task_info in self.task_info_list):
+            self.task_info_list.remove(task_info)
+            part_info.task_infos.append(task_info)
+
+    def add_time_partition(self, name, identifier,
+                           part_type="Periodic", abort_on_miss=True,
+                           period=10, activation_date=0, length=3,
+                           overrun=0, deadline=10, preemption_cost=0,
+                           data=None, task_scheduler="", cpus=[]):
+        """
+        Helper method to add a time partition system
+        
+        """
+        part_info = TimePartitionInfo(name, identifier, part_type,
+                                      abort_on_miss, period,
+                                      activation_date, length,
+                                      overrun, deadline,
+                                      preemption_cost, data,
+                                      task_scheduler, cpus)
+
+        self._part_scheduler_info = SchedulerInfo()
+        self._part_scheduler_info.clas = "simso.schedulers.FP_TP_SYNC"
+        self._time_part_info = part_info
+        self.part_info_list.append(part_info)
+        return part_info
+
     def add_task(self, name, identifier, task_type="Periodic",
                  abort_on_miss=True, period=10, activation_date=0,
                  n_instr=0, mix=0.5, stack_file="", wcet=0, acet=0,
-                 et_stddev=0, deadline=10, base_cpi=1.0, followed_by=None,
-                 list_activation_dates=[], preemption_cost=0, data=None):
+                 et_stddev=0, deadline=10, base_cpi=1.0,
+                 followed_by=None, list_activation_dates=[],
+                 preemption_cost=0, data=None, partition=None, overrun=0, 
+                 acet_distribution=None):
         """
         Helper method to create a TaskInfo and add it to the list of tasks.
         """
@@ -292,8 +341,12 @@ class Configuration(object):
                         activation_date, n_instr, mix,
                         (stack_file, self.cur_dir), wcet, acet, et_stddev,
                         deadline, base_cpi, followed_by, list_activation_dates,
-                        preemption_cost, data)
-        self.task_info_list.append(task)
+                        preemption_cost, data, overrun, acet_distribution)
+        
+        if(self.part_info_list and partition):
+            partition.task_infos.append(task)
+        else:
+            self.task_info_list.append(task)
         return task
 
     def add_processor(self, name, identifier, cs_overhead=0,
@@ -305,5 +358,6 @@ class Configuration(object):
         proc = ProcInfo(
             identifier, name, cs_overhead, cl_overhead, migration_overhead,
             speed)
+
         self.proc_info_list.append(proc)
         return proc

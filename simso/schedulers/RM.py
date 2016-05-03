@@ -6,16 +6,20 @@ class RM(Scheduler):
     """ Rate monotonic """
     def init(self):
         self.ready_list = []
+        self._part = None
+
+    def set_time_partition(self, part):
+        self._part = part
 
     def on_activate(self, job):
         self.ready_list.append(job)
-        job.cpu.resched()
+        job.cpu.resched(self)
 
     def on_terminated(self, job):
         if job in self.ready_list:
             self.ready_list.remove(job)
         else:
-            job.cpu.resched()
+            job.cpu.resched(self)
 
     def schedule(self, cpu):
         decision = None
@@ -37,5 +41,5 @@ class RM(Scheduler):
                 if cpu_min.running:
                     self.ready_list.append(cpu_min.running)
                 decision = (job, cpu_min)
-
+                                
         return decision

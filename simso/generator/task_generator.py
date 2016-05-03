@@ -7,7 +7,7 @@ import random
 import math
 
 
-def UUniFastDiscard(n, u, nsets):
+def UUniFastDiscard(n, u, nsets, low_bound=0, up_bound=0):
     sets = []
     while len(sets) < nsets:
         # Classic UUniFast algorithm:
@@ -21,7 +21,11 @@ def UUniFastDiscard(n, u, nsets):
 
         # If no task utilization exceeds 1:
         if not [ut for ut in utilizations if ut > 1]:
-            sets.append(utilizations)
+            if low_bound!=up_bound:
+                if not not [ut for ut in utilizations if ut > up_bound or ut < low_bound]:
+                    sets.append(utilizations)
+            else:
+                    sets.append(utilizations)                
 
     return sets
 
@@ -308,5 +312,5 @@ def gen_tasksets(utilizations, periods):
     def trunc(x, p):
         return int(x * 10 ** p) / float(10 ** p)
 
-    return [[(trunc(ui * pi, 6), trunc(pi, 6)) for ui, pi in zip(us, ps)]
+    return [[[trunc(ui * pi, 6), trunc(pi, 6)] for ui, pi in zip(us, ps)]
             for us, ps in zip(utilizations, periods)]

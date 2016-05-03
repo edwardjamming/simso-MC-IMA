@@ -271,24 +271,49 @@ class Results(object):
     def _generate_scheduler(self):
         self.scheduler = SchedulerR()
         last = self.observation_window[0]
-        for t, evt in self.model.scheduler.monitor:
-            if (t < self.observation_window[0] or
-                    t > self.observation_window[1]):
-                continue
+        
+        if(self.model.time_partitioning):
+            for part in self.model.part_list:
+                sched = part.scheduler
+                
+                for t, evt in sched.monitor:
+                    if (t < self.observation_window[0] or
+                        t > self.observation_window[1]):
+                        continue
 
-            if evt.event == SchedulerEvent.BEGIN_SCHEDULE:
-                self.scheduler.schedule_count += 1
-            elif evt.event == SchedulerEvent.END_SCHEDULE:
-                self.scheduler.schedule_overhead += t - last
-            elif evt.event == SchedulerEvent.BEGIN_ACTIVATE:
-                self.scheduler.activate_count += 1
-            elif evt.event == SchedulerEvent.END_ACTIVATE:
-                self.scheduler.activate_overhead += t - last
-            elif evt.event == SchedulerEvent.BEGIN_TERMINATE:
-                self.scheduler.terminate_count += 1
-            elif evt.event == SchedulerEvent.END_TERMINATE:
-                self.scheduler.terminate_overhead += t - last
-            last = t
+                    if evt.event == SchedulerEvent.BEGIN_SCHEDULE:
+                        self.scheduler.schedule_count += 1
+                    elif evt.event == SchedulerEvent.END_SCHEDULE:
+                        self.scheduler.schedule_overhead += t - last
+                    elif evt.event == SchedulerEvent.BEGIN_ACTIVATE:
+                        self.scheduler.activate_count += 1
+                    elif evt.event == SchedulerEvent.END_ACTIVATE:
+                        self.scheduler.activate_overhead += t - last
+                    elif evt.event == SchedulerEvent.BEGIN_TERMINATE:
+                        self.scheduler.terminate_count += 1
+                    elif evt.event == SchedulerEvent.END_TERMINATE:
+                        self.scheduler.terminate_overhead += t - last
+                    last = t
+                
+        else:
+            for t, evt in self.model.scheduler.monitor:
+                if (t < self.observation_window[0] or
+                    t > self.observation_window[1]):
+                    continue
+
+                if evt.event == SchedulerEvent.BEGIN_SCHEDULE:
+                    self.scheduler.schedule_count += 1
+                elif evt.event == SchedulerEvent.END_SCHEDULE:
+                    self.scheduler.schedule_overhead += t - last
+                elif evt.event == SchedulerEvent.BEGIN_ACTIVATE:
+                    self.scheduler.activate_count += 1
+                elif evt.event == SchedulerEvent.END_ACTIVATE:
+                    self.scheduler.activate_overhead += t - last
+                elif evt.event == SchedulerEvent.BEGIN_TERMINATE:
+                    self.scheduler.terminate_count += 1
+                elif evt.event == SchedulerEvent.END_TERMINATE:
+                    self.scheduler.terminate_overhead += t - last
+                last = t
 
     def _generate_processors(self):
         self.processors = {}
