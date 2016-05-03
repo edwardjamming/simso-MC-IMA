@@ -22,7 +22,7 @@ def UUniFastDiscard(n, u, nsets, low_bound=0, up_bound=0):
         # If no task utilization exceeds 1:
         if not [ut for ut in utilizations if ut > 1]:
             if low_bound!=up_bound:
-                if not not [ut for ut in utilizations if ut > up_bound or ut < low_bound]:
+                if not [ut for ut in utilizations if ut > up_bound or ut < low_bound]:
                     sets.append(utilizations)
             else:
                     sets.append(utilizations)                
